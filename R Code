@@ -1,0 +1,953 @@
+M.Sc Time-Domain Approaches for Dynamic Principal Component Analysis with Sparsity-Inducing Extensions R Codes
+
+
+# ===============================
+# ODPC MODEL Section 3.1
+# ===============================
+#HICP-All items dataset
+library(readr)
+library(odpc)
+library(dplyr)
+library(tidyverse)
+hicpforodpc <- read_csv("C:/Users/Nicole/OneDrive/Desktop/hicpforodpc.csv")
+data1<-hicpforodpc %>%
+  pivot_wider(names_from = c(indic,geo), values_from =OBS_VALUE)
+stdata1 <- data1[,-1] %>% mutate_all(~(scale(.) %>% as.vector))
+# Store the mean and standard deviation of the original data
+means <- apply(data1[,-1], 2, mean)
+sds <- apply(data1[,-1], 2, sd)
+stdata1<-ts(stdata1,frequency = 12,start=c(2013,1),end = c(2024,2))
+stdata1<-stdata1[,c(1:27)] #retaining only the HICP-ALL items index (final index)
+stdata1train<-stdata1[1:94,] #70% as training set
+stdata1test<-stdata1[95:134,] #30% as testing set
+tic();
+fit <- crit.odpc(stdata1train, k_list = 1,max_num_comp = 6)  #number of components to be used and their respective lags and leads.
+fit
+toc()
+
+summary(fit)
+fittt<-fitted(fit,num_comp = 1)
+View(fittt)
+
+
+rescaled_data1 <- as.data.frame(
+  sweep(stdata1train, 2, sds, FUN = "*") %>%   # Multiply each column by its respective standard deviation
+    sweep(2, means, FUN = "+")              # Add the respective mean to each column
+)
+
+rescaled_data2 <- as.data.frame(
+  sweep(fittt, 2, sds, FUN = "*") %>%   # Multiply each column by its respective standard deviation
+    sweep(2, means, FUN = "+")              # Add the respective mean to each column
+)
+
+#loadings
+fit[[1]][2]$B[1,]  #0 lag loadings
+fit[[1]][2]$B[2,]  #1 lag loadings
+
+plot(fit[[1]]$B[1,],which = 'Loadings', ylab = '')
+plot(fit[[1]]$B[1,],type='l') # 0 lag loadings for component 1
+plot(fit[[1]]$B[2,],type='l') # 1 lag loadings for component 1
+plot(fit[[2]]$B[1,],type='l') # 0 lag loadings for component 2
+plot(fit[[2]]$B[2,],type='l') # 1 lag loadings for component 2
+
+fit[[1]]$B
+write.csv(as.data.frame(fit[[1]]$B),"C:/Users/Nicole/OneDrive/Desktop/fit[[1]]$B.csv")
+fit[[2]]$B
+write.csv(as.data.frame(fit[[2]]$B),"C:/Users/Nicole/OneDrive/Desktop/fit[[2]]$B.csv")
+
+
+plot.odpc(fit, which = 'Loadings', ylab = '')
+
+# Calculating the variance explained
+var.dpcaT = (1 - sum( (rescaled_data2 -rescaled_data1)**2 ) / sum(rescaled_data1**2))*100
+cat("Variance explained by DPCA:\t",var.dpcaT,"%\n")
+
+residuals <- rescaled_data1 -rescaled_data2
+
+plot(rescaled_data1[,1],main = 'Fitted values',
+     type = "l",
+     col = 1,
+     xlab = "Year",
+     ylab = " HICP-all items Austria")
+lines(rescaled_data2[,1], 
+      type = "l",
+      col = 2,
+      xlab = "Year",
+      ylab = " Reconstructed HICP-Food and Non-alcoholic beverages Austria")
+# Add a legend to the plot
+legend("topleft", 
+       legend = c("Original", "ODPC"), 
+       col = c(1, 2), 
+       lty = 1, 
+       cex = 0.6, 
+       text.font = 0.8)
+
+
+#heatmap of loadings
+
+loadingscomp1lag0<-fit[[1]][2]$B[1,]  #0 lag loadings
+loadingscomp1lag1<-fit[[1]][2]$B[2,]  #1 lag loadings
+
+# Calculate global min and max for pc 1
+global_min1 <- min(c(loadingscomp1lag0,loadingscomp1lag1))
+global_max1 <- max(c(loadingscomp1lag0,loadingscomp1lag1))
+
+
+# Convert the named vector to a data frame
+loadings_df <- data.frame(
+  column_description = names(
+    loadingscomp1lag1),
+  loading_value = as.numeric(
+    loadingscomp1lag1)
+)
+
+# Ensure columns are appropriately named
+colnames(loadings_df) <- c("Column Description", "Loading Value")
+
+
+# Extract prefix and suffix using regular expressions
+loadings_df$prefix <- sub("_.*", "", loadings_df$`Column Description`)  # Extract prefix
+loadings_df$suffix <- sub(".*_", "", loadings_df$`Column Description`)  # Extract suffix
+
+# Remove the original column name
+loadings_df$column <- NULL
+loadings_df
+# Create a combined column for prefix and suffix for better plotting
+loadings_df$combined <- paste(loadings_df$prefix, loadings_df$suffix, sep = "_")
+
+
+# Plot heatmap for loadings_df1
+ggplot(loadings_df, aes(x = prefix, y = suffix, fill = `Loading Value`)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "blue",         # Color for the lowest values
+    mid = "white",        # Color for the midpoint values
+    high = "red",         # Color for the highest values
+    midpoint = 0,         # Use 0 or any central value based on your data
+    limits = c(global_min1, global_max1)  # Use global min and max for consistent scale
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Heatmap of ODPC loadings at Lag 1",
+    x = "HICP-All Items Index",
+    y = "Country",
+    fill = "Loading Value"
+  )
+
+#Obtaining the ODPC Forecasts
+forecasts <- forecast.odpcs(fit, h = 40)
+forecasts
+write.csv(as.data.frame(forecasts),"C:/Users/Nicole/OneDrive/Desktop/forecasts.csv")
+
+rescaled_data4 <- as.data.frame(
+  sweep(stdata1test, 2, sds, FUN = "*") %>%   # Multiply each column by its respective standard deviation
+    sweep(2, means, FUN = "+")              # Add the respective mean to each column
+)
+forecastss<-(forecasts*sds)+means
+
+plot(rescaled_data4[,1],type='l',ylim=c(-1.5,3.3),main = 'Forecasted values',ylab = " HICP-All items Austria"
+     ,xlab = "Year")
+lines(forecaststs[,1],type='l',col=3,xlab = "Year",
+      ylab = " HICP-All items Austria")
+legend("topleft", 
+       legend = c("Original", "Reconstructed ODPC", "Forecasted"), 
+       col = c(1, 2,3), 
+       lty = 1, 
+       cex = 0.6, 
+       text.font = 0.8)
+msep <- mean((rescaled_data4 - forecaststs)**2)
+msep
+rmsep<-sqrt(msep)
+
+# ===============================
+# Baseline models; Classical PCA with ARIMA Forecasting, Holt-Winters and Brillinger's DPCA with ARIMA forecasting. Section 5.3.
+# ===============================
+
+# Perform PCA
+pca_result <- prcomp(stdata1train, center = FALSE, scale. = FALSE)
+# Variance of each principal component
+var_explained <- (pca_result$sdev)^2
+
+# Proportion of variance explained
+prop_var_explained <- var_explained / sum(var_explained)
+
+# Cumulative variance explained
+cum_var_explained <- cumsum(prop_var_explained)
+
+# Print results
+prop_var_explained
+cum_var_explained
+# Number of components to reach 90% cumulative variance
+num_components <- min(which(cum_var_explained >= 0.9))
+num_components
+cum_var_explained[num_components]
+
+# Scree plot
+plot(cum_var_explained, type = "b",
+     xlab = "Principal Component",
+     ylab = "Cumulative Variance Explained",
+     main = "Scree Plot")
+abline(h = 0.9, col = "red", lty = 2)  # mark 90% variance threshold
+
+
+# Scores of first k components
+scores_k <- pca_result$x[, 1:num_components]
+
+# Loadings of first k components
+loadings_k <- pca_result$rotation[, 1:num_components]
+
+# Reconstruct the data (scaled)
+reconstructed <- scores_k %*% t(loadings_k)
+
+# Compute MSE between original scaled data and reconstruction
+mse <- mean((stdata1train - reconstructed)^2)
+mse
+
+
+library(forecast)
+
+# Forecast horizon = length of test set
+h <- nrow(stdata1test)
+
+# Store forecasts for selected components
+component_forecasts <- list()
+
+for (i in 1:num_components) {
+  # Extract the i-th principal component (scores)
+  pc_ts <- ts(pca_result$x[, i])
+  
+  # Fit auto ARIMA to the component
+  fit <- auto.arima(pc_ts)
+  
+  # Forecast h steps ahead
+  fc <- forecast(fit, h = h)
+  
+  # Store forecasted values
+  component_forecasts[[i]] <- fc$mean
+}
+
+
+# Loadings for the selected components
+loadings_k <- pca_result$rotation[, 1:num_components]
+
+# Convert list of forecasts to a matrix
+fc_matrix <- do.call(cbind, component_forecasts)
+
+# Reconstruct forecasts of the original series
+reconstructed_forecasts <- fc_matrix %*% t(loadings_k)
+
+
+##
+##ODPC
+tic();
+fit_SP <- crit.odpc(stdata1train, k_list=1:5,max_num_comp = 6) 
+fit_SP
+toc()
+
+recons <- fitted(fit_SP,num_comp = 6) #num_comp changes according to the optimal fit_SP
+
+rescaled_data1 <- as.data.frame(
+  sweep(stdata1train, 2, sds, FUN = "*") %>%   # Multiply each column by its respective standard deviation
+    sweep(2, means, FUN = "+")              # Add the respective mean to each column
+)
+
+rescaled_data2 <- as.data.frame(
+  sweep(recons, 2, sds, FUN = "*") %>%   # Multiply each column by its respective standard deviation
+    sweep(2, means, FUN = "+")              # Add the respective mean to each column
+)
+
+
+plot(fit_SP[[1]]$B[1,],type='l') # 0 lag loadings for component 1
+plot(fit_SP[[1]]$B[2,],type='l') # 1 lag loadings for component 1
+
+plot(fit_SP[[2]]$B[1,],type='l') # 0 lag loadings for component 2
+plot(fit_SP[[2]]$B[2,],type='l') # 1 lag loadings for component 2
+
+plot(fit_SP[[3]]$B[1,],type='l') # 0 lag loadings for component 3
+plot(fit_SP[[3]]$B[2,],type='l') # 1 lag loadings for component 3
+
+var.dpcaT = (1 - sum( (rescaled_data2 -rescaled_data1)**2 ) / sum(rescaled_data1**2))*100
+cat("Variance explained by DPCA:\t",var.dpcaT,"%\n")
+
+
+residuals <- rescaled_data1 - rescaled_data2
+
+# Number of observations
+n <- nrow(fittodpc1)
+
+# Number of parameters in the model (k)
+# Here, k can be approximated based on the model fit. For ODPC, it includes the number of components and loadings.
+k <- length(fit[[1]]$B[1,])
+
+# Calculate RSS (Residual Sum of Squares)
+rss <- sum(residuals^2)
+
+# Calculate AIC
+aic <- n * log(rss / n) + 2 * k
+
+# Calculate BIC
+bic <- n * log(rss / n) + log(n) * k
+
+# Print AIC and BIC
+print(paste("AIC:", aic))
+print(paste("BIC:", bic))
+
+forecasts <- forecast.odpcs(fit_SP, h = 150)
+write.csv(as.data.frame(forecasts),"C:/Users/Nicole/OneDrive/Desktop/ODPCforecastssp50.csv")
+forecastss<-(forecasts*sds)+means
+
+rescaled_data4 <- as.data.frame(
+  sweep(stdata1test, 2, sds, FUN = "*") %>%   # Multiply each column by its respective standard deviation
+    sweep(2, means, FUN = "+")              # Add the respective mean to each column
+)
+forecastss<-(forecasts*sds)+means
+
+plot(rescaled_data4[,1],type='l',ylim=c(-1.5,3.3),main = 'Forecasted values',
+     ,xlab = "Year")
+lines(forecastss[,1],type='l',col=3,xlab = "Year",
+      ylab = " HICP-All items Austria")
+legend("topleft", 
+       legend = c("Original", "Reconstructed ODPC", "Forecasted"), 
+       col = c(1, 2,3), 
+       lty = 1, 
+       cex = 0.6, 
+       text.font = 0.8)
+msep <- mean((rescaled_data4 - forecastss)**2)
+msep
+rmsep<-sqrt(msep)
+
+library(forecast)
+#fitting Holt-Winters as a baseline model
+stdata1train
+# Test set: remaining observations
+stdata1test
+# Number of variables
+n_variables <- ncol(stdata1train)
+
+# Forecast horizon
+h <- nrow(stdata1test)
+
+# Store MSE for each variable
+mse_list <- numeric(n_variables)
+
+for (i in 1:n_variables) {
+  # Convert variable series to time series
+  ts_train <- ts(stdata1train[, i], frequency = 1)  # daily data
+  
+  # Fit Holt's linear method (level + trend, no seasonality)
+  holt_model <- holt(ts_train, h = h)
+  
+  # Forecast
+  forecast_values <- holt_model$mean
+  
+  # Compute MSE for this variable
+  mse_list[i] <- mean((stdata1test[, i] - forecast_values)^2)
+}
+
+
+# Overall MSEP across all variables
+overall_msep <- mean(mse_list)
+overall_msep
+
+#Perfoming Brillinger's DPCA with ARIMA forecasting as a baseline model
+# ===============================
+# Brillinger's DPCA + ARIMA Forecasting
+# ===============================
+
+library(freqdom)
+library(forecast)
+
+# Fit DPCA on training data
+res.dpcaT <- dpca(stdata1train, q = 10, Ndpc = 16)
+
+# Extract dynamic principal components (scores)
+scores_dpca <- res.dpcaT$Y
+
+# Forecast horizon (length of test set)
+h <- nrow(stdata1test)
+
+# Forecast each DPCA component using ARIMA
+dpca_score_forecasts <- matrix(NA, nrow = h, ncol = ncol(scores_dpca))
+
+for (i in 1:ncol(scores_dpca)) {
+  
+  fit_arima <- auto.arima(scores_dpca[, i])
+  fc <- forecast(fit_arima, h = h)
+  
+  dpca_score_forecasts[, i] <- as.numeric(fc$mean)
+}
+
+# (project original data onto DPCA components)
+beta <- solve(t(scores_dpca) %*% scores_dpca) %*% t(scores_dpca) %*% stdata1train
+
+# Forecast reconstruction
+forecast_dpca <- dpca_score_forecasts %*% beta
+
+# Compute forecast errors
+actual <- as.matrix(stdata1test)
+
+errors_dpca <- actual - forecast_dpca
+
+# Accuracy metrics
+msep_dpca <- mean(errors_dpca^2, na.rm = TRUE)
+rmsep_dpca <- sqrt(msep_dpca)
+
+cat("DPCA MSEP:", msep_dpca, "\n")
+cat("DPCA RMSEP:", rmsep_dpca, "\n")
+
+
+#performing the Diebold-Mariano Test
+library(forecast)
+
+results_dm <- data.frame(
+  Series = colnames(rescaled_data4),
+  DM_stat = NA,
+  p_value = NA
+)
+
+for (i in 1:ncol(rescaled_data4)) {
+  
+  actual <- as.numeric(rescaled_data4[, i])
+  e1 <- actual - as.numeric(forecastss[, i])
+  e2 <- actual - as.numeric(pca_forecasts[, i])
+  
+  test <- dm.test(e1, e2, h = 1, power = 2)
+  
+  results_dm$DM_stat[i] <- test$statistic
+  results_dm$p_value[i] <- test$p.value
+}
+
+print(results_dm)
+
+
+
+# ===============================
+# Implementing Sparse-ODPC Section 3.2
+# ===============================
+
+library(seastests)
+library(readr)
+library(odpc)
+library(dplyr)
+library(forecast)
+library(tidyverse)
+hicpforodpc <- read_csv("C:/Users/Nicole/OneDrive/Desktop/hicpforodpc.csv")
+
+View(hicpforodpc)
+hicpforodpc <-hicpforodpc[,-c(1:5,10)]
+
+hicpforodpc
+
+data1<-hicpforodpc %>%
+  pivot_wider(names_from = c(indic,geo), values_from =OBS_VALUE)
+plot(data1[,c(118,130)]     , main = "HICP-HOUSING, WATER, ELECTRICITY, GAS, OTHER FUELS",
+     Xtitle = "Time") #overall index
+stdata1 <- data1[,-1] %>% mutate_all(~(scale(.) %>% as.vector))
+# Compute the means and standard deviations
+data1<-data1[,-1]
+means <- apply(data1, 2, mean)
+sds <- apply(data1, 2, sd)
+
+rescaled_data <- as.data.frame(
+  sweep(stdata1, 2, sds, FUN = "*") %>%   # Multiply each column by its respective standard deviation
+    sweep(2, means, FUN = "+")              # Add the respective mean to each column
+)
+
+View(rescaled_data)
+
+stdata1<-ts(stdata1,start=c(2013,1),frequency = 12)
+
+frequency <- 12
+#testing for seasonality
+#change test="_" accordingly: eg fried,kw,seasdum
+# Function to test seasonality
+test_seasonality <- function(data, frequency) {
+  results <- sapply(data, function(ts_column) {
+    ts_data <- ts(ts_column, frequency = frequency)
+    isSeasonal(ts_data,test="seasdum")
+  })
+  return(results)
+}
+
+# Apply the function to the dummy data
+seasonality_results <- test_seasonality(stdata1, frequency)
+
+# Print the results
+print(seasonality_results)
+
+# Count the number of TRUE values in the seasonality results
+count_true <- sum(seasonality_results)
+print(paste("Number of seasonal series:", count_true))
+
+library(stats)
+# Function to adjust seasonality
+adjust_seasonality <- function(data, frequency, seasonality_results) {
+  adjusted_data <- data
+  for (i in seq_along(seasonality_results)) {
+    if (seasonality_results[i]) {  # Condition check
+      ts_data <- ts(data[, i], frequency = frequency)
+      decomposed <- stl(ts_data, s.window = "periodic")
+      adjusted_data[, i] <- decomposed$time.series[, "remainder"]
+    }
+  }
+  return(adjusted_data)
+}
+
+# Apply the function to adjust seasonality
+stladjusted_data <- adjust_seasonality(stdata1, frequency, seasonality_results)
+
+# Print the adjusted data
+print(stladjusted_data)
+# Apply the function to the dummy data
+stladjusted_results <- test_seasonality(stladjusted_data, frequency)
+
+# Print the results
+print(stladjusted_results)
+# Count the number of TRUE values in the seasonality results
+count_true <- sum(stladjusted_results)
+print(paste("Number of seasonal series:", count_true))
+
+
+plot(stladjusted_data[,1])
+stladjusted_datatrain<-stladjusted_data[1:94,]
+stladjusted_datatest<-stladjusted_data[195:134,]
+
+#seasonal adjusted time series data which will be used to apply sparse-odpc
+library(tictoc)
+tic();
+fit <- crit.sparse_odpc(stladjusted_datatrain,k_list = 2,max_num_comp = 2, ncores = 8)
+fit
+toc()
+fitttts<-fitted(fit,num_comp =2) #num_comp changes according to the fit of the Sparse_ODPC
+View(fitttts)
+plot(fitttts[,1],type='l')
+plot(fit[[1]]$B[1,], ylab = '',type='l')
+plot(fit[[1]]$B[1,],type='l') # 0 lag loadings for component 1
+plot(fit[[1]]$B[2,],type='l') # 1 lag loadings for component 1
+plot(fit[[1]]$B[3,],type='l')
+plot(fit[[2]]$B[1,],type='l')
+plot(fit[[2]]$B[2,],type='l')
+plot(fit[[1]], which = "Component", xlab = "", ylab = "")
+loadingscom3lag0<-fit[[1]]$B[1,]
+loadingscom2lag0<-fit[[2]]$B[1,]
+plot(loadingscom2lag0,type='l')
+write.csv(as.data.frame(loadingscom3lag0),"C:/Users/Nicole/OneDrive/Desktop/loadingscom3lag0.csv")
+
+rescaled_data1 <- as.data.frame(
+  sweep(stladjusted_datatrain, 2, sds, FUN = "*") %>%   # Multiply each column by its respective standard deviation
+    sweep(2, means, FUN = "+")              # Add the respective mean to each column
+)
+
+rescaled_data2 <- as.data.frame(
+  sweep(fitttts, 2, sds, FUN = "*") %>%   # Multiply each column by its respective standard deviation
+    sweep(2, means, FUN = "+")              # Add the respective mean to each column
+)
+
+# Compute MSE
+mse <- mean((as.matrix(rescaled_data1) - as.matrix(rescaled_data2))^2)
+
+# Calculating the variance explained
+var.dpcaT = (1 - sum( (rescaled_data2 -rescaled_data1)**2 ) / sum(rescaled_data1**2))*100
+cat("Variance explained by DPCA:\t",var.dpcaT,"%\n")
+
+
+plot(as.data.frame(rescaled_data1[,1]),
+     type = "l",
+     col = 1,
+     xlab = "Year",
+     ylab = " HICP-Food and Non-alcoholic beverages Austria")
+lines(rescaled_data2[,1], 
+      type = "l",
+      col = 3,
+      xlab = "Year",
+      ylab = " HICP-Food and Non-alcoholic beverages Austria")
+legend("topleft", legend=c("Original", "Sparse-ODPC"),
+       col=c(1, 3), lty=1, cex=0.55, text.font=0.6)
+
+forecastssparse <- forecast.odpcs(fit, h = 40)
+forecastssparse
+write.csv(as.data.frame(forecastssparse),"C:/Users/Nicole/OneDrive/Desktop/forecastssparse.csv")
+
+rescaled_data4 <- as.data.frame(
+  sweep(stladjusted_datatest, 2, sds, FUN = "*") %>%   # Multiply each column by its respective standard deviation
+    sweep(2, means, FUN = "+")              # Add the respective mean to each column
+)
+forecastss<-(forecasts*sds)+means
+
+plot(rescaled_data4[,1],type='l',ylim=c(-1.5,3.3),xlim=c(2013,2025),main = 'Forecasted values',ylab = "HICP-Food and Non-Alcoholic Beverages Austria"
+     ,xlab = "Year")
+lines(forecastss, 
+      type = "l",
+      col = 3,
+      xlab = "Year",)
+lines(forecaststs[,1],type='l',col=2,xlab = "Year",
+      ylab = " HICP-Food and Non-Alcoholic Beverages Austria")
+
+
+#Plotting the Heatmaps obtained from the Sparse-ODPC model
+library(ggplot2)
+library(reshape2)
+library(dplyr)
+
+loadingscomp1lag0<-fit[[1]]$B[1,]
+loadingscomp1lag1<-fit[[1]]$B[2,]
+loadingscomp1lag2<-fit[[1]]$B[3,]
+loadingscomp2lag0<-fit[[2]]$B[1,]
+loadingscomp2lag1<-fit[[2]]$B[2,]
+loadingscomp2lag2<-fit[[2]]$B[3,]
+
+write.csv(as.data.frame(loadingscomp1lag0),"C:/Users/Nicole/OneDrive/Desktop/Msc Info Thesis/M.Sc Thesis writeups/sparse-odpc 2 comp 2 lags/loadingscomp1lag0.csv")
+write.csv(as.data.frame(loadingscomp1lag1),"C:/Users/Nicole/OneDrive/Desktop/Msc Info Thesis/M.Sc Thesis writeups/sparse-odpc 2 comp 2 lags/loadingscomp1lag1.csv")
+write.csv(as.data.frame(loadingscomp1lag2),"C:/Users/Nicole/OneDrive/Desktop/Msc Info Thesis/M.Sc Thesis writeups/sparse-odpc 2 comp 2 lags/loadingscomp1lag2.csv")
+write.csv(as.data.frame(loadingscomp2lag0),"C:/Users/Nicole/OneDrive/Desktop/Msc Info Thesis/M.Sc Thesis writeups/sparse-odpc 2 comp 2 lags/loadingscomp2lag0.csv")
+write.csv(as.data.frame(loadingscomp2lag1),"C:/Users/Nicole/OneDrive/Desktop/Msc Info Thesis/M.Sc Thesis writeups/sparse-odpc 2 comp 2 lags/loadingscomp2lag1.csv")
+write.csv(as.data.frame(loadingscomp2lag2),"C:/Users/Nicole/OneDrive/Desktop/Msc Info Thesis/M.Sc Thesis writeups/sparse-odpc 2 comp 2 lags/loadingscomp2lag2.csv")
+
+
+# Calculate global min and max for pc 1
+global_min1 <- min(c(loadingscomp1lag0,loadingscomp1lag1,loadingscomp1lag2))
+global_max1 <- max(c(loadingscomp1lag0,loadingscomp1lag1,loadingscomp1lag2))
+
+# Calculate global min and max for pc 2
+global_min2 <- min(c(loadingscomp2lag0,loadingscomp2lag1,loadingscomp2lag2))
+global_max2 <- max(c(loadingscomp2lag0,loadingscomp2lag1,loadingscomp2lag2))
+
+
+# Convert the named vector to a data frame
+loadings_df <- data.frame(
+  column_description = names(
+    loadingscomp2lag0),
+  loading_value = as.numeric(
+    loadingscomp2lag0)
+)
+
+# Ensure columns are appropriately named
+colnames(loadings_df) <- c("Column Description", "Loading Value")
+
+
+# Extract prefix and suffix using regular expressions
+loadings_df$prefix <- sub("_.*", "", loadings_df$`Column Description`)  # Extract prefix
+loadings_df$suffix <- sub(".*_", "", loadings_df$`Column Description`)  # Extract suffix
+
+# Remove the original column name
+loadings_df$column <- NULL
+loadings_df
+# Create a combined column for prefix and suffix for better plotting
+loadings_df$combined <- paste(loadings_df$prefix, loadings_df$suffix, sep = "_")
+
+
+
+# Plot heatmap for loadings_df1
+ggplot(loadings_df, aes(x = suffix, y = prefix, fill = `Loading Value`)) +
+  geom_tile() +
+  scale_fill_gradient2(
+    low = "blue",         # Color for the lowest values
+    mid = "white",        # Color for the midpoint values
+    high = "red",         # Color for the highest values
+    midpoint = 0,         # Use 0 or any central value based on your data
+    limits = c(global_min2, global_max2)  # Use global min and max for consistent scale
+  ) +
+  theme_minimal() +
+  labs(
+    title = "Heatmap of Loadings",
+    x = "Country",
+    y = "Basket",
+    fill = "Loading Value"
+  )
+
+# =========================================================
+# Sparse-ODPC Loadings: Basket & Country Interpretation
+# =========================================================
+
+library(readr)
+library(dplyr)
+library(stringr)
+library(tidyr)
+library(ggplot2)
+
+loadingscomp1lag0 <- read_csv("sparse-odpc 2 comp 2 lags/loadingscomp1lag0.csv")
+loadingscomp1lag1 <- read_csv("sparse-odpc 2 comp 2 lags/loadingscomp1lag1.csv")
+loadingscomp1lag2 <- read_csv("sparse-odpc 2 comp 2 lags/loadingscomp1lag2.csv")
+
+loadingscomp2lag0 <- read_csv("sparse-odpc 2 comp 2 lags/loadingscomp2lag0.csv")
+loadingscomp2lag1 <- read_csv("sparse-odpc 2 comp 2 lags/loadingscomp2lag1.csv")
+loadingscomp2lag2 <- read_csv("sparse-odpc 2 comp 2 lags/loadingscomp2lag2.csv")
+
+tidy_loading_df <- function(df, component, lag) {
+  df %>%
+    rename(id = ...1, loading = 2) %>%
+    mutate(
+      Basket      = str_extract(id, "^CP-[A-Z0-9]+"),
+      Country     = str_extract(id, "[A-Z]{2}$"),
+      abs_loading = abs(loading),
+      Component   = component,
+      Lag         = lag
+    )
+}
+
+l1_0 <- tidy_loading_df(loadingscomp1lag0, "Comp1", 0)
+l1_1 <- tidy_loading_df(loadingscomp1lag1, "Comp1", 1)
+l1_2 <- tidy_loading_df(loadingscomp1lag2, "Comp1", 2)
+
+l2_0 <- tidy_loading_df(loadingscomp2lag0, "Comp2", 0)
+l2_1 <- tidy_loading_df(loadingscomp2lag1, "Comp2", 1)
+l2_2 <- tidy_loading_df(loadingscomp2lag2, "Comp2", 2)
+
+# Combine all loadings
+
+loadings <- bind_rows(l1_0, l1_1, l1_2, l2_0, l2_1, l2_2)
+
+
+# Baskets with large loadings
+
+basket_importance <- loadings %>%
+  group_by(Basket) %>%
+  summarise(
+    total_loading = sum(abs_loading),
+    mean_loading  = mean(abs_loading),
+    max_loading   = max(abs_loading),
+    .groups = "drop"
+  ) %>%
+  arrange(desc(total_loading))
+
+# Plot: basket importance
+ggplot(basket_importance,
+       aes(x = reorder(Basket, total_loading),
+           y = total_loading)) +
+  geom_col() +
+  coord_flip() +
+  labs(
+    title = "Overall Importance of HICP Baskets",
+    x = "HICP Basket",
+    y = "Cumulative Absolute Loading"
+  )
+
+
+# Countries with large loadings for specific baskets
+
+country_basket <- loadings %>%
+  group_by(Basket, Country) %>%
+  summarise(
+    total_loading = sum(abs_loading),
+    .groups = "drop"
+  )
+
+# Heatmap: country–basket dominance
+ggplot(country_basket,
+       aes(x = Basket, y = Country, fill = total_loading)) +
+  geom_tile() +
+  scale_fill_viridis_c() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    title = "Country–Basket Contributions to Sparse-ODPC Components",
+    fill = "Total Absolute Loading"
+  )
+
+
+# Highlight only countries with large contributions per basket
+dominant_countries <- loadings %>%
+  group_by(Basket) %>%
+  filter(abs_loading >= quantile(abs_loading, 0.9)) %>%  # top 20% per basket
+  ungroup()
+
+ggplot(dominant_countries,
+       aes(x = Basket, y = Country, fill = abs_loading)) +
+  geom_tile() +
+  scale_fill_viridis_c() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    title = "Countries Dominating Specific HICP Baskets",
+    fill = "Absolute Loading"
+  )
+
+
+# Choose the number of top countries to show per basket
+top_n_countries <- 3
+
+dominant_countries <- loadings %>%
+  group_by(Basket) %>%
+  slice_max(order_by = abs_loading, n = top_n_countries) %>%  # top 3 countries
+  ungroup()
+
+ggplot(dominant_countries,
+       aes(x = reorder(Country, abs_loading), y = abs_loading, fill = Component)) +
+  geom_col() +
+  facet_wrap(~ Basket, scales = "free_y") +
+  coord_flip() +
+  labs(
+    title = "Top Countries Influencing Each HICP Basket",
+    x = "Country",
+    y = "Absolute Loading",
+    fill = "Component"
+  ) +
+  theme_minimal()
+
+
+# Split by sparse dynamic component
+
+country_basket_comp <- loadings %>%
+  group_by(Basket, Country, Component) %>%
+  summarise(
+    total_loading = sum(abs_loading),
+    .groups = "drop"
+  )
+
+ggplot(country_basket_comp,
+       aes(x = Basket, y = Country, fill = total_loading)) +
+  geom_tile() +
+  facet_wrap(~ Component) +
+  scale_fill_viridis_c() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  labs(
+    title = "Country–Basket Contributions by Dynamic Component",
+    fill = "Total Absolute Loading"
+  )
+
+# Overall Top Countries per Basket (aggregated)
+
+agg_loadings <- loadings %>%
+  group_by(Basket, Country) %>%
+  summarise(total_abs_loading = sum(abs_loading), .groups = "drop")
+
+# Pick top N countries per basket
+top_n_countries <- 3
+dominant_overall <- agg_loadings %>%
+  group_by(Basket) %>%
+  slice_max(order_by = total_abs_loading, n = top_n_countries) %>%
+  ungroup()
+
+# Bar plot: overall top countries
+ggplot(dominant_overall,
+       aes(x = reorder(Country, total_abs_loading), y = total_abs_loading)) +
+  geom_col(fill = "steelblue") +
+  facet_wrap(~ Basket, scales = "free_y") +
+  coord_flip() +
+  labs(
+    title = "Top Countries Impacting Each HICP Basket (Overall)",
+    x = "Country",
+    y = "Total Absolute Loading"
+  ) +
+  theme_minimal()
+
+#Comparison of Sparse ODPC with other baseline models: Holt Winters and Classical PCA with ARIMA forecasting
+
+#Holtwinters
+
+library(forecast)
+
+n_series <- ncol(stladjusted_data)
+
+h <- 40  # Forecast horizon
+train_data <- stladjusted_data[1:94, , drop = FALSE]
+test_data  <- stladjusted_data[95:(95 + h - 1), , drop = FALSE]
+
+hw_rmseps <- numeric(n_series)
+all_squared_errors <- numeric()
+
+for (i in 1:n_series) {
+  ts_train <- ts(train_data[, i], frequency = 12)  # Adjust frequency as needed
+  
+  hw_fit <- tryCatch({
+    ets(ts_train)
+  }, error = function(e) {
+    NULL
+  })
+  
+  if (!is.null(hw_fit)) {
+    fc <- forecast(hw_fit, h = h)$mean
+  } else {
+    fc <- forecast::naive(ts_train, h = h)$mean
+  }
+  
+  ts_test <- test_data[, i]
+  series_sq_errors <- (ts_test - fc)^2
+  hw_rmseps[i] <- sqrt(mean(series_sq_errors, na.rm = TRUE))
+  all_squared_errors <- c(all_squared_errors, series_sq_errors)
+}
+
+
+overall_rmsepHoltwinters <- sqrt(mean(all_squared_errors, na.rm = TRUE))
+
+cat("Overall Holt-Winters RMSEP:", overall_rmsepHoltwinters, "\n")
+cat("Individual Holt-Winters RMSEP (first 10 series):", round(hw_rmseps[1:10], 4), "\n")
+
+library(readr)
+rmsep_df <- read_csv("C:/Users/Nicole/OneDrive/Desktop/Msc Info Thesis/M.Sc Thesis writeups/sparse odpc testing set/rmsep_df.csv")
+
+print(rmsep_df)
+overall_rmsep <- sqrt(mean(rmsep_df$RMSEP^2)) 
+overall_rmsep
+
+
+#Classical PCA as baseline model for forecasting and comparison with Sparse-ODPC forecasts
+library(forecast)
+
+train_data <- stladjusted_data[1:94, , drop = FALSE]
+test_data  <- stladjusted_data[95:(90 + h), , drop = FALSE] 
+h <- 40
+n_series <- ncol(train_data)
+
+pca_fit <- prcomp(train_data, center = FALSE, scale. = FALSE)
+
+# Explained variance
+var_exp <- pca_fit$sdev^2
+cum_var <- cumsum(var_exp / sum(var_exp))
+
+# Number of components explaining at least 90%
+k <- min(which(cum_var >= 0.90))
+
+# PCA scores and loadings
+scores_k   <- pca_fit$x[, 1:k, drop = FALSE]
+loadings_k <- pca_fit$rotation[, 1:k, drop = FALSE]
+
+
+# ARIMA forecasts on PCA scores as baseline model
+
+score_forecasts <- matrix(NA, nrow = h, ncol = k)
+
+for (j in 1:k) {
+  pc_ts <- ts(scores_k[, j])
+  fit   <- auto.arima(pc_ts)
+  fc    <- forecast(fit, h = h)
+  score_forecasts[, j] <- fc$mean
+}
+
+
+# Reconstruct forecasts
+pca_forecasts <- score_forecasts %*% t(loadings_k)
+rescaled_data4 <- as.data.frame(
+  sweep(stladjusted_datatest, 2, sds, FUN = "*") %>%   # Multiply each column by its respective standard deviation
+    sweep(2, means, FUN = "+")              # Add the respective mean to each column
+)
+pca_forecasts<-(pca_forecasts*sds)+means
+
+# Errors and RMSEP
+errors_pca <- as.matrix(rescaled_data4) - pca_forecasts
+rmsep_pca <- sqrt(mean(errors_pca^2, na.rm = TRUE))
+cat("Number of PCA components:", k, "\n")
+cat("Overall PCA + ARIMA RMSEP:", rmsep_pca, "\n")
+overall_rmseparima <- sqrt(mean(overall_rmsepArima^2)) 
+overall_rmseparima
+
+#performing the Diebold-Mariano Test
+library(forecast)
+
+results_dm <- data.frame(
+  Series = colnames(rescaled_data4),
+  DM_stat = NA,
+  p_value = NA
+)
+
+for (i in 1:ncol(rescaled_data4)) {
+  
+  actual <- as.numeric(rescaled_data4[, i])
+  e1 <- actual - as.numeric(forecastss[, i])
+  e2 <- actual - as.numeric(pca_forecasts[, i])
+  
+  test <- dm.test(e1, e2, h = 1, power = 2)
+  
+  results_dm$DM_stat[i] <- test$statistic
+  results_dm$p_value[i] <- test$p.value
+}
+
+print(results_dm)
